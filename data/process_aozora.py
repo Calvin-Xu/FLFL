@@ -20,7 +20,7 @@ def process_reading(reading):
     return processed_reading
 
 
-def process_line(line, delimiters, postprocess=True):
+def process_line(line, delimiters, furiganafy=True, postprocess=True):
     """
     Processes a single line from the file.
 
@@ -43,10 +43,22 @@ def process_line(line, delimiters, postprocess=True):
             return ""
         else:
             return text
+    if len(parts) == 4:  # katakana entries are like this, what do I know
+        text, reading, pos, _ = parts
+        # if pos.strip() == "カタカナ":
+        return text
     return ""
 
 
-def process_file(filepath, delimiter_config):
+def condensed(text):
+    text = "".join(text.split())
+    text = text.replace("※", "")
+    return text
+
+
+def process_file(
+    filepath, delimiter_config, validate_sentence=False, validate_reading=False
+):
     """
     Processes a single file and returns a list of examples.
 
@@ -65,16 +77,29 @@ def process_file(filepath, delimiter_config):
             if "行番号" in line:
                 if segments:  # reached new example; process the previous one
                     formatted_output = "".join(segments)
+                    sentence_validation = condensed(sentence_validation)
+                    reading_validation = condensed(reading_validation)
+                    _sentence = condensed(sentence)
+                    _reading = condensed(reading)
                     if (
-                        "<ruby>" in formatted_output
-                        and sentence == sentence_validation
-                        and reading == reading_validation
+                        "<ruby>" not in formatted_output
+                        or (_sentence != sentence_validation and validate_sentence)
+                        or (_reading != reading_validation and validate_reading)
                     ):
+                        if _sentence != sentence_validation:
+                            print(
+                                f"Error: {_sentence} != {sentence_validation}, file: {filepath}"
+                            )
+                        if _reading != reading_validation:
+                            print(
+                                f"Error: {_reading} != {reading_validation}, file: {filepath}"
+                            )
+                    else:
                         examples.append(
                             {
-                                "input": sentence,
+                                "input": sentence.replace("※", ""),
                                 "output": formatted_output,
-                                "ref_reading": reading,
+                                "ref_reading": reading_validation,
                             }
                         )
                 sentence = next(file).split("\t")[0]
@@ -85,17 +110,18 @@ def process_file(filepath, delimiter_config):
                     "",
                 )  # reset for new example
             else:
-                segment_output = process_line(line, delimiter_config)
+                segment_output = process_line(line, delimiter_config, postprocess=False)
                 segments.append(segment_output)
-                if (
-                    len(line.split("\t")) == 3
-                ):  # update the original reading without spaces
-                    sentence_validation += line.split("\t")[0]
-                    reading_validation += line.split("\t")[1]
+                sentence_validation += line.split("\t")[0]
+                reading_validation += line.split("\t")[1]
 
         # Process the last example in the file
         formatted_output = "".join(segments).strip()
-        if "<ruby>" in formatted_output and reading == reading_validation:
+        if (
+            "<ruby>" not in formatted_output
+            or (condensed(sentence) != sentence_validation and validate_sentence)
+            or (condensed(reading) != reading_validation and validate_reading)
+        ):
             examples.append(
                 {"input": sentence, "output": formatted_output, "ref_reading": reading}
             )
@@ -103,7 +129,9 @@ def process_file(filepath, delimiter_config):
     return examples
 
 
-def process_directory(root_dir, delimiters):
+def process_directory(
+    root_dir, delimiters, validate_sentence=False, validate_reading=False
+):
     """
     Walks through the directory, processes all .txt files, and adds the examples to a HuggingFace dataset.
 
@@ -147,7 +175,9 @@ def process_directory(root_dir, delimiters):
 def main():
     root_directory = "aozora_dataset"
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
-    dataset = process_directory(root_directory, delimiters)
+    dataset = process_directory(
+        root_directory, delimiters, validate_sentence=True, validate_reading=True
+    )
     dataset.save_to_disk("./aozora_examples")
 
 
