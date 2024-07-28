@@ -1,3 +1,7 @@
+aozora_dataset
+shosi_dataset
+aozora_examples
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
