@@ -1,6 +1,33 @@
 import re
 import os
 from datasets import Dataset, DatasetDict, Value, Features
+from kyujipy import KyujitaiConverter
+import concurrent.futures
+import string
+
+# converter = KyujitaiConverter()
+
+
+# def convert_kyujitai_to_shinjitai(text):
+#     return converter.kyujitai_to_shinjitai(text)
+
+
+def katakana_to_hiragana(text):
+    # from https://github.com/ikegami-yukino/jaconv/blob/master/jaconv/conv_table.py
+    HIRAGANA = list(
+        "ぁあぃいぅうぇえぉおかがきぎくぐけげこごさざしじすず"
+        "せぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴ"
+        "ふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろわ"
+        "をんーゎゐゑゕゖゔゝゞ・「」。、"
+    )
+    KATAKANA = list(
+        "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソ"
+        "ゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペ"
+        "ホボポマミムメモャヤュユョヨラリルレロワヲンーヮヰヱヵヶヴ"
+        "ヽヾ・「」。、"
+    )
+    converted_text = text.translate(str.maketrans("".join(KATAKANA), "".join(HIRAGANA)))
+    return converted_text
 
 
 def process_reading(reading):
@@ -53,6 +80,7 @@ def process_line(line, delimiters, furiganafy=True, postprocess=True):
 def condensed(text):
     text = "".join(text.split())
     text = text.replace("※", "")
+    text = text.rstrip(string.punctuation)
     return text
 
 
@@ -77,18 +105,20 @@ def process_file(
             if "行番号" in line:
                 if segments:  # reached new example; process the previous one
                     formatted_output = "".join(segments)
-                    sentence_validation = condensed(sentence_validation)
-                    reading_validation = condensed(reading_validation)
+                    _sentence_validation = condensed(sentence_validation)
+                    reading_validation = katakana_to_hiragana(
+                        condensed(reading_validation)
+                    )
                     _sentence = condensed(sentence)
-                    _reading = condensed(reading)
+                    _reading = katakana_to_hiragana(condensed(reading))
                     if (
                         "<ruby>" not in formatted_output
-                        or (_sentence != sentence_validation and validate_sentence)
+                        or (_sentence != _sentence_validation and validate_sentence)
                         or (_reading != reading_validation and validate_reading)
                     ):
-                        if _sentence != sentence_validation and validate_sentence:
+                        if _sentence != _sentence_validation and validate_sentence:
                             print(
-                                f"Error 1: {_sentence} != {sentence_validation}, file: {filepath}"
+                                f"Error 1: {_sentence} != {_sentence_validation}, file: {filepath}"
                             )
                         if _reading != reading_validation and validate_reading:
                             print(
@@ -97,7 +127,7 @@ def process_file(
                     else:
                         examples.append(
                             {
-                                "input": sentence.replace("※", ""),
+                                "input": sentence_validation.replace("※", ""),
                                 "output": formatted_output,
                                 "ref_reading": reading,
                             }
@@ -110,7 +140,7 @@ def process_file(
                     "",
                 )  # reset for new example
             else:
-                segment_output = process_line(line, delimiter_config)
+                segment_output = process_line(line, delimiter_config, postprocess=False)
                 segments.append(segment_output)
                 sentence_validation += line.split("\t")[0]
                 reading_validation += line.split("\t")[1]
@@ -120,7 +150,11 @@ def process_file(
         if (
             "<ruby>" not in formatted_output
             or (condensed(sentence) != sentence_validation and validate_sentence)
-            or (condensed(reading) != reading_validation and validate_reading)
+            or (
+                katakana_to_hiragana(condensed(reading))
+                != katakana_to_hiragana(reading_validation)
+                and validate_reading
+            )
         ):
             examples.append(
                 {"input": sentence, "output": formatted_output, "ref_reading": reading}
@@ -147,15 +181,17 @@ def process_directory(
     for dirpath, _, filenames in os.walk(root_dir):
         for filename in [f for f in filenames if f.endswith(".txt")]:
             filepath = os.path.join(dirpath, filename)
-            file_examples = process_file(filepath, delimiters)
+            # can parallelize this, but it's not that slow
+            file_examples = process_file(
+                filepath, delimiters, validate_sentence, validate_reading
+            )
             for example in file_examples:
                 example["file_path"] = os.path.relpath(
                     filepath, start=root_dir
                 )  # Add relative file path to each example
                 examples.append(example)
             n_file_processed += 1
-            if n_file_processed % 100 == 0:
-                print(f"Processed {n_file_processed} files", flush=True)
+            print(f"Processed {n_file_processed} files", flush=True)
     print(f"Processed {n_file_processed} files", flush=True)
 
     features = Features(
@@ -173,12 +209,13 @@ def process_directory(
 
 
 def main():
-    root_directory = "aozora_dataset"
+    root_directory = "shosi_dataset"
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
+    print(list(os.walk(root_directory)))
     dataset = process_directory(
-        root_directory, delimiters, validate_sentence=True, validate_reading=True
+        root_directory, delimiters, validate_sentence=False, validate_reading=True
     )
-    dataset.save_to_disk("./aozora_examples")
+    dataset.save_to_disk("./shosi_examples")
 
 
 if __name__ == "__main__":
