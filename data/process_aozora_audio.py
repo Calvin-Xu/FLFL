@@ -41,48 +41,88 @@ def find_and_extract_zips(root_dir, target_dir):
 
 
 def process_file(file_path, delimiters):
-    current_block = {"input": "", "output": "", "readings": []}
+    current_block = {
+        "input": "",
+        "output": "",
+        "inferred_readings": [],
+        "mecab_readings": [],
+    }
     examples = []
 
     def process_block(block):
-        text = block["input"]
-        for lemma, reading in sorted(
-            block["readings"], key=lambda x: len(x[0]), reverse=True
-        ):
-            ruby_text = f"{delimiters['ruby'][0]}{lemma}{delimiters['rt'][0]}{reading}{delimiters['rt'][1]}{delimiters['ruby'][1]}"
-            text = text.replace(lemma, ruby_text)
-        return text
+        texts = {
+            "inferred_readings": ("", block["input"]),
+            "mecab_readings": ("", block["input"]),
+        }
+        readings_queue = {
+            "inferred_readings": block["inferred_readings"].copy(),
+            "mecab_readings": block["mecab_readings"].copy(),
+        }
+
+        def replace_first(text, lemma, reading):
+            index = text.find(lemma)
+            if index != -1:
+                before = text[:index]
+                after = text[index + len(lemma) :]
+                ruby_text = f"{delimiters['ruby'][0]}{lemma}{delimiters['rt'][0]}{reading}{delimiters['rt'][1]}{delimiters['ruby'][1]}"
+                return before + ruby_text, after
+            return text, ""
+
+        for reading_ver in ["inferred_readings", "mecab_readings"]:
+            for _ in range(len(readings_queue[reading_ver])):
+                if readings_queue[reading_ver]:
+                    lemma, reading = readings_queue[reading_ver].pop(0)
+                    before, after = replace_first(texts[reading_ver][1], lemma, reading)
+                    texts[reading_ver] = (texts[reading_ver][0] + before, after)
+
+        inferred_annotated = "".join(texts["inferred_readings"])
+        mecab_annotated = "".join(texts["mecab_readings"])
+        return inferred_annotated, mecab_annotated
 
     with open(file_path, "r", encoding="utf-8") as file:
         readings_section = False
         for line in file:
             if "行番号" in line:
                 if current_block["input"]:
-                    if len(current_block["readings"]) == 0:
+                    if len(current_block["inferred_readings"]) == 0:
                         continue
-                    annotated_text = process_block(current_block)
+                    inferred_annotated, mecab_annotated = process_block(current_block)
                     examples.append(
                         {
                             "input": current_block["input"].lstrip(L_REMOVE),
-                            "output": annotated_text.lstrip(L_REMOVE),
+                            "output": inferred_annotated.lstrip(L_REMOVE),
+                            "mecab_output": mecab_annotated.lstrip(L_REMOVE),
                         }
                     )
-                current_block = {"input": "", "output": "", "readings": []}
+                current_block = {
+                    "input": "",
+                    "output": "",
+                    "inferred_readings": [],
+                    "mecab_readings": [],
+                }
             elif "[青空文庫テキスト]" in line:
                 current_block["input"] = line.split("\t")[0]
             elif "読み推定結果:" in line:
                 readings_section = True
             elif readings_section and line.strip():
-                parts = line.strip().split("\t")
+                parts = line.strip().split()  # there are mixed spaces here...
                 if len(parts) == 4:
                     lemma, inferred_reading, mecab_reading, whisper_text = parts
-                    current_block["readings"].append((lemma, inferred_reading))
+                    current_block["inferred_readings"].append((lemma, inferred_reading))
+                    current_block["mecab_readings"].append((lemma, mecab_reading))
             elif line.strip() == "":
                 readings_section = False
 
     if current_block["input"]:
-        annotated_text = process_block(current_block)
-        examples.append({"input": current_block["input"], "output": annotated_text})
+        if len(current_block["inferred_readings"]) != 0:
+            inferred_annotated, mecab_annotated = process_block(current_block)
+            examples.append(
+                {
+                    "input": current_block["input"].lstrip(L_REMOVE),
+                    "output": inferred_annotated.lstrip(L_REMOVE),
+                    "mecab_output": mecab_annotated.lstrip(L_REMOVE),
+                }
+            )
 
     return examples
 
@@ -125,6 +165,7 @@ def process_directory(root_dir, delimiters):
         {
             "input": Value("string"),
             "output": Value("string"),
+            "mecab_output": Value("string"),
             "file_path": Value("string"),
         }
     )
@@ -135,12 +176,15 @@ def process_directory(root_dir, delimiters):
 
 
 def main():
-    # unprocessed_dir = "aozora_audio"
+    # # unprocessed_dir = "aozora_audio"
     root_dir = "aozora_speech_dataset"
-    # find_and_extract_zips(unprocessed_dir, root_dir)
+    # # find_and_extract_zips(unprocessed_dir, root_dir)
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
     dataset = process_directory(root_dir, delimiters)
     dataset.save_to_disk("./aozora_speech_examples")
+    print(dataset["all_data"])
+    print(dataset["all_data"][:10])
+    # print(process_file("/Users/calvinxu/Projects/ML/FLFL/test.txt", delimiters))
 
 
 if __name__ == "__main__":
