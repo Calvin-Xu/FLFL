@@ -1,22 +1,33 @@
 from enum import Enum
+from typing import Dict, List, Tuple
 from utils import is_hiragana, is_kanji, is_katakana
+from jaconv import kata2hira
 
 
-def generate_possible_kanji_reading_pairs(text, reading):
+def generate_possible_kanji_reading_pairs(
+    text: str, reading: str
+) -> List[List[Tuple[str, str]]]:
+    """
+    Generates all possible kanji-reading pairs for a given text and reading.
+    Args:
+        text (str): The text to generate pairs for.
+        reading (str): The kana reading of the text.
+    Returns:
+        list: A list of lists of all possible (continuous block of) kanji - kana pairs.
+    """
     # ! it is impossible to determine an unique reading from the arguments alone
     # for example, 持ち力 can be (も)ち（ちから）or（もち）ち（から） if you don't know anything
     # this function generates all valid readings (fully-aligned, each kanji mapped to at least one kana)
     # and greedily short readings of kanji are at the front of the list (and can be used)
 
-    # this is a good heuristic for short text (like a MeCab token)
-    # but fails for for example
-    # 鹿乃子のこのこ虎視眈々, しかのこのこのここしたんたん
-    # the valid furigana pairs returned are
+    # this is a good heuristic for short text
+    # (like a MeCab token, where there should not be any ambiguity in the first place)
+    # but fails on e.g., 鹿乃子のこのこ虎視眈々, しかのこのこのここしたんたん
+    # the valid furigana pairs returned in order are
     # 鹿乃子(しか)のこのこ虎視眈々(のここしたんたん)
     # 鹿乃子(しかのこ)のこのこ虎視眈々(こしたんたん) * correct
-    # 鹿乃子(しかのこの)こ虎視眈々(したんたん)
 
-    def is_kana(char):
+    def is_kana(char: str) -> bool:
         return is_hiragana(char) or is_katakana(char)
 
     if not all(is_kana(char) for char in reading):
@@ -36,11 +47,12 @@ def generate_possible_kanji_reading_pairs(text, reading):
 
     state = States.START
     current_kanji_block = ""
+    text, reading = kata2hira(text), kata2hira(reading)
 
     results = []
 
     while text and reading:
-        print(text, reading, state)
+        # print(text, reading, state)
         match state:
             case States.START:
                 if is_kana(text[-1]):
@@ -63,13 +75,23 @@ def generate_possible_kanji_reading_pairs(text, reading):
                 else:
                     current_kanji_block = text[-1] + current_kanji_block
                     if is_kana(text[-2]):
-                        splits = []
-                        # shortest readings are in the front of results
-                        for j, char in enumerate(reading):
-                            if char == text[-2]:
+                        # find and split on longest preceding kana block in text
+                        preceding_kana_block = ""
+                        for char in reversed(text[:-1]):
+                            if is_kana(char):
+                                preceding_kana_block = char + preceding_kana_block
+                            else:
+                                break
+                        # find all possible binary splits on kana block
+                        splits = []  # shortest splits first
+                        for j in range(len(preceding_kana_block) - 1, len(reading)):
+                            if (
+                                reading[j + 1 - len(preceding_kana_block) : j + 1]
+                                == preceding_kana_block
+                            ):
                                 split = (reading[: j + 1], reading[j + 1 :])
                                 splits.append(split)
-                        print(splits)
+                        # print(splits)
                         results = [
                             result + [(current_kanji_block, split[1])]
                             for split in splits
@@ -78,7 +100,7 @@ def generate_possible_kanji_reading_pairs(text, reading):
                             )
                             if result is not None
                         ]
-                        print(results)
+                        # print(results)
                         state = States.END
                     else:
                         state = States.KANJI
@@ -88,7 +110,9 @@ def generate_possible_kanji_reading_pairs(text, reading):
     return results
 
 
-def generate_furigana(text, reading, delimiters):
+def generate_furigana(
+    text: str, reading: str, delimiters: Dict[str, Tuple[str, str]]
+) -> str:
     def replace_first(text, lemma, reading):
         index = text.find(lemma)
         if index != -1:
@@ -120,6 +144,10 @@ def test_furigana():
         ("付きっ切り", "つきっきり"),
         ("歯が痛いので歯科医に診てもらった", "はがいたいのでしかいにみてもらった"),
         ("鹿乃子のこのこ虎視眈々", "しかのこのこのここしたんたん"),
+        (
+            "斜め七十七度の並びで泣く泣く嘶くナナハン七台難なく並べて長眺め",
+            "ななめななじゅうななどのならびでなくなくいななくななはんななだいなんなくならべてながながめ",
+        ),
     ]
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
     for test in tests:

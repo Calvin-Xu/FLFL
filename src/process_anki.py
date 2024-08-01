@@ -18,9 +18,11 @@ def extract_entries(file_path):
             examples.append(example)
     return examples
 
+
 def main():
     # examples = extract_entries("anki_dataset/Mining-All-1.txt")
     # print(examples)
+    pass
 
 
 if __name__ == "__main__":
