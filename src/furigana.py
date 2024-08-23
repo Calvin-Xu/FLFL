@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Dict, List, Tuple
-from utils import is_hiragana, is_kanji, is_katakana
+from utils import is_hiragana, is_katakana
 from jaconv import kata2hira
 
 
@@ -17,8 +17,8 @@ def generate_possible_kanji_reading_pairs(
     """
     # ! it is impossible to determine an unique reading from the arguments alone
     # for example, 持ち力 can be (も)ち（ちから）or（もち）ち（から） if you don't know anything
-    # this function generates all valid readings (fully-aligned, each kanji mapped to at least one kana)
-    # and greedily short readings of kanji are at the front of the list (and can be used)
+    # this function generates all valid readings (fully-aligned, each kanji block mapped to at least one kana)
+    # and greedily short readings of kanji are at the front of the list
 
     # this is a good heuristic for short text
     # (like a MeCab token, where there should not be any ambiguity in the first place)
@@ -27,11 +27,25 @@ def generate_possible_kanji_reading_pairs(
     # 鹿乃子(しか)のこのこ虎視眈々(のここしたんたん)
     # 鹿乃子(しかのこ)のこのこ虎視眈々(こしたんたん) * correct
 
+    # a consumer of parses can check that each kanji block is at least as long as the kana
+    # though this is again not guaranteed, and should have a fallback to the first parse
+    # e.g., 蝦虎魚, はぜ
+
     def is_kana(char: str) -> bool:
+        if char in ["々", "ヶ", "ヵ", "〆"]:
+            return False
         return is_hiragana(char) or is_katakana(char)
 
+    def is_kanji(char: str) -> bool:
+        # treat everything not kana as kanji
+        return not is_kana(char)
+
     if not all(is_kana(char) for char in reading):
-        raise ValueError("generate_furigana:reading must be in kana")
+        raise ValueError(f"generate_furigana:reading must be in kana: {reading}")
+    if len(text) == 0 or len(reading) == 0:
+        raise ValueError(
+            f"generate_furigana:text and reading must have length > 0: {text}, {reading}"
+        )
     # recursive
     # base cases
     if all(is_kanji(char) for char in text) or all(is_kana(char) for char in text):
@@ -57,16 +71,14 @@ def generate_possible_kanji_reading_pairs(
             case States.START:
                 if is_kana(text[-1]):
                     state = States.KANA
-                    text = text[:-1]
-                    reading = reading[:-1]
+                    text, reading = text[:-1], reading[:-1]
                 else:
                     state = States.KANJI
             case States.KANA:
                 if is_kanji(text[-1]):
                     state = States.KANJI
                 else:
-                    text = text[:-1]
-                    reading = reading[:-1]
+                    text, reading = text[:-1], reading[:-1]
                     state = States.KANA
             case States.KANJI:
                 if all(is_kanji(char) for char in text):
@@ -111,7 +123,10 @@ def generate_possible_kanji_reading_pairs(
 
 
 def generate_furigana(
-    text: str, reading: str, delimiters: Dict[str, Tuple[str, str]]
+    text: str,
+    reading: str,
+    delimiters: Dict[str, Tuple[str, str]],
+    min_reading_len=True,
 ) -> str:
     def replace_first(text, lemma, reading):
         index = text.find(lemma)
@@ -123,7 +138,23 @@ def generate_furigana(
         return text, ""
 
     _text = ("", text)
-    pairs = generate_possible_kanji_reading_pairs(text, reading)[0]
+    results = generate_possible_kanji_reading_pairs(text, reading)
+    if results is None or len(results) == 0:
+        raise ValueError(
+            f"generate_furigana: no valid configuration found for {text}, {reading}"
+        )
+    pairs = []
+    if min_reading_len:
+        pairs = next(
+            (
+                result
+                for result in results
+                if all(len(pair[0]) <= len(pair[1]) for pair in result)
+            ),
+            results[0],
+        )
+    else:
+        pairs = results[0]
     for pair in pairs:
         lemma, reading = pair
         left, right = replace_first(_text[1], lemma, reading)
@@ -148,10 +179,13 @@ def test_furigana():
             "斜め七十七度の並びで泣く泣く嘶くナナハン七台難なく並べて長眺め",
             "ななめななじゅうななどのならびでなくなくいななくななはんななだいなんなくならべてながながめ",
         ),
+        ("由比ヶ浜結衣", "ゆいがはまゆい"),
+        ("雪ノ下雪乃", "ゆきのしたゆきの"),
+        ("蝦虎魚", "はぜ"),
     ]
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
     for test in tests:
-        print(generate_furigana(test[0], test[1], delimiters))
+        print(generate_furigana(test[0], test[1], delimiters, min_reading_len=True))
 
 
 def main():

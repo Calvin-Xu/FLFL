@@ -2,8 +2,18 @@ import string
 import zipfile
 import os
 from datasets import Dataset, DatasetDict, Value, Features
+import json
+from collections import defaultdict
 
 L_REMOVE = r"""!%&)*+,-./:;=>?@\]^_`|}~)・〕"""
+
+# KANJI_DATA = defaultdict(set)
+# with open("kanji-kyouiku.json", "r", encoding="utf-8") as file:
+#     kanji_data_full = json.load(file)
+#     for kanji in kanji_data_full:
+#         KANJI_DATA[kanji].update(kanji_data_full[kanji]["readings_on"])
+#         KANJI_DATA[kanji].update(kanji_data_full[kanji]["readings_kun"])
+#     print(KANJI_DATA)
 
 
 def condensed(text):
@@ -81,10 +91,14 @@ def process_file(file_path, delimiters):
 
     with open(file_path, "r", encoding="utf-8") as file:
         readings_section = False
+        # kanji_check_failed = False
         for line in file:
             if "行番号" in line:
                 if current_block["input"]:
-                    if len(current_block["inferred_readings"]) == 0:
+                    if (
+                        len(current_block["inferred_readings"]) == 0
+                        # or kanji_check_failed
+                    ):
                         continue
                     inferred_annotated, mecab_annotated = process_block(current_block)
                     examples.append(
@@ -100,6 +114,7 @@ def process_file(file_path, delimiters):
                     "inferred_readings": [],
                     "mecab_readings": [],
                 }
+                # kanji_check_failed = False
             elif "[青空文庫テキスト]" in line:
                 current_block["input"] = line.split("\t")[0]
             elif "読み推定結果:" in line:
@@ -108,6 +123,8 @@ def process_file(file_path, delimiters):
                 parts = line.strip().split()  # there are mixed spaces here...
                 if len(parts) == 4:
                     lemma, inferred_reading, mecab_reading, whisper_text = parts
+                    # if inferred_reading not in KANJI_DATA[lemma]:
+                    #     kanji_check_failed = True
                     current_block["inferred_readings"].append((lemma, inferred_reading))
                     current_block["mecab_readings"].append((lemma, mecab_reading))
             elif line.strip() == "":
@@ -180,6 +197,7 @@ def main():
     root_dir = "aozora_speech_dataset"
     # # find_and_extract_zips(unprocessed_dir, root_dir)
     delimiters = {"ruby": ("<ruby>", "</ruby>"), "rt": ("<rt>", "</rt>")}
+
     dataset = process_directory(root_dir, delimiters)
     dataset.save_to_disk("./aozora_speech_examples")
     print(dataset["all_data"])

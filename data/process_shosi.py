@@ -1,10 +1,8 @@
 import re
 import os
 from datasets import Dataset, DatasetDict, Value, Features
-from kyujipy import KyujitaiConverter
-import concurrent.futures
 import string
-
+import jaconv
 # converter = KyujitaiConverter()
 
 
@@ -13,21 +11,7 @@ import string
 
 
 def katakana_to_hiragana(text):
-    # from https://github.com/ikegami-yukino/jaconv/blob/master/jaconv/conv_table.py
-    HIRAGANA = list(
-        "ぁあぃいぅうぇえぉおかがきぎくぐけげこごさざしじすず"
-        "せぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴ"
-        "ふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろわ"
-        "をんーゎゐゑゕゖゔゝゞ・「」。、"
-    )
-    KATAKANA = list(
-        "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソ"
-        "ゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペ"
-        "ホボポマミムメモャヤュユョヨラリルレロワヲンーヮヰヱヵヶヴ"
-        "ヽヾ・「」。、"
-    )
-    converted_text = text.translate(str.maketrans("".join(KATAKANA), "".join(HIRAGANA)))
-    return converted_text
+    return jaconv.kata2hira(text)
 
 
 def process_reading(reading):
